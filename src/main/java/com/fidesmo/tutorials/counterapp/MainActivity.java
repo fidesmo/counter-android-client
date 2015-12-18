@@ -1,21 +1,18 @@
 package com.fidesmo.tutorials.counterapp;
 
 import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.net.Uri;
 import android.nfc.Tag;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
-import android.widget.Toast;
+import android.graphics.Color;
 
 import com.fidesmo.tutorials.counterapp.R;
 
 import org.androidannotations.annotations.Click;
 import org.androidannotations.annotations.EActivity;
-import org.androidannotations.annotations.OnActivityResult;
 import org.androidannotations.annotations.ViewById;
 import org.androidannotations.annotations.UiThread;
 
@@ -26,34 +23,36 @@ import nordpol.android.AndroidCard;
 import nordpol.android.TagDispatcher;
 import nordpol.android.OnDiscoveredTagListener;
 import nordpol.Apdu;
+
 /**
- * Unique Activity in the HelloFidesmo example app, written for the Fidesmo Android tutorial
- * It attempts to open the NFC interface (if disabled, shows a dialog to the user)
- * Once a card is detected, it sends a SELECT command towards the cardlet written in the tutorial
- *  - if successful, it displays the string returned by the card
- *  - if unsuccessful, it assumes the cardlet is not installed on the card and triggers
- *  the service delivery process using the Fidesmo App
+ * Unique Activity in the Counter App
+ * Implements two operations, triggered by two buttons:
+ * - read counter
+ * - decrement counter
+ * The result is shown in a large number (TextView counterValue) and a second TextView (mainText)
+ * is used to log the NFC actions.
  */
 @EActivity(R.layout.activity_main)
 public class MainActivity extends AppCompatActivity implements OnDiscoveredTagListener {
 
     // APPLICATION_ID is the value assigned to your application by Fidesmo
     final private static String APPLICATION_ID = "C89D215B";
-    final private static String APP_VERSION = "0101";
-    final private static String SERVICE_ID = "CounterApplet";
+    final private static String APP_VERSION = "0201";
 
-    // Constants used to initiate cardlet delivery through the Fidesmo App
-    private final static String FIDESMO_APP = "com.fidesmo.sec.android";
-    private final static String SERVICE_URI = "https://api.fidesmo.com/service/";
-    private final static String SERVICE_DELIVERY_CARD_ACTION = "com.fidesmo.sec.DELIVER_SERVICE";
-    // Code to identify the call when starting Intent for Result
-    static private final int SERVICE_DELIVERY_REQUEST_CODE = 724;
+    // Card commands
+    final private static int READ_COUNTER = 1;
+    final private static int DECREMENT_COUNTER = 2;
+    private int pendingCommand = READ_COUNTER;
 
-    // URLs for Google Play app and to install apps via browser
-    private final static String MARKET_URI = "market://details?id=";
-    private final static String MARKET_VIA_BROWSER_URI = "http://play.google.com/store/apps/details?id=";
+    // For the "read counter" APDU command we will use Nordpol's built-in select operation
+    // For the "decrement counter", we need to define the raw command here
+    final private static byte[] DECREMENT_APDU = {0x00, 0x00, 0x01, 0x01, 0x00};
+
+    // status code returned when the counter is empty
+    final private static byte[] EMPTY_STATUS_CODE = {(byte)0x69, (byte)0x85};
 
     private static final String TAG = "MainActivity";
+
     // The TagDispatcher is responsible for managing the NFC for the activity
     private TagDispatcher tagDispatcher;
 
@@ -61,7 +60,11 @@ public class MainActivity extends AppCompatActivity implements OnDiscoveredTagLi
     @ViewById
     TextView mainText;
     @ViewById
-    Button installButton;
+    TextView counterValue;
+    @ViewById
+    Button readCounterButton;
+    @ViewById
+    Button decrementCounterButton;
 
     //Two methods for setting the UI (on UI thread, because, threading...)
     @UiThread
@@ -71,26 +74,30 @@ public class MainActivity extends AppCompatActivity implements OnDiscoveredTagLi
 
     @UiThread
     void setMainMessage(String text) {
-        String oldString = mainText.getText().toString();
-        mainText.setText(oldString + "\n" + text);
+        mainText.setText(text);
     }
+
+    //Showing the counter's value or an error
+    @UiThread
+    void showCounterValue(int value) {
+        if (value >= 0) {
+            counterValue.setText(String.valueOf(value));
+            counterValue.setTextColor(Color.GREEN);
+        } else {
+            counterValue.setText(getString(R.string.counter_empty));
+            counterValue.setTextColor(Color.RED);
+        }
+    }
+
 
     @Override
     protected void onResume() {
         super.onResume();
-        // The first argument is the activity for which the NFC is managed
-        // The second argument is the OnDiscoveredTagListener which is also implemented by this activity
-        // This means that tagDiscovered will be called whenever a new tag appears
-        tagDispatcher = TagDispatcher.get(this, this);
-        // Start listening on the NFC interface when the app gains focus.
-        tagDispatcher.enableExclusiveNfc();
     }
 
-    // Stop listening on the NFC interface if the app loses focus
     @Override
     public void onPause() {
         super.onPause();
-        tagDispatcher.disableExclusiveNfc();
     }
 
     /**
@@ -111,6 +118,8 @@ public class MainActivity extends AppCompatActivity implements OnDiscoveredTagLi
         } catch(IOException e) {
             e.printStackTrace();
         }
+        // Stop listening on the NFC interface once the card transaction has finished
+        tagDispatcher.disableExclusiveNfc();
     }
 
     /**
@@ -123,8 +132,21 @@ public class MainActivity extends AppCompatActivity implements OnDiscoveredTagLi
     private void communicateWithCard(IsoCard isoCard) {
         try {
             isoCard.connect();
-            //This is where you use your appId to select your app on the card (the one assigned to you when signing up to the Dev Portal)
-            byte[] response = isoCard.transceive(Apdu.select(APPLICATION_ID, APP_VERSION));
+            byte[] response;
+            switch (pendingCommand) {
+                case READ_COUNTER:
+                    response = isoCard.transceive(Apdu.select(APPLICATION_ID, APP_VERSION));
+                    break;
+                case DECREMENT_COUNTER:
+                    response = isoCard.transceive(Apdu.select(APPLICATION_ID, APP_VERSION));
+                    response = isoCard.transceive(DECREMENT_APDU);
+                    break;
+                default:
+                    // TODO: raise exception. Meanwhile, just read the counter
+                    response = isoCard.transceive(Apdu.select(APPLICATION_ID, APP_VERSION));
+                    Log.i(TAG, "Unknown command");
+
+            }
 
             // Analyze the response. Its last two bytes are the status bytes - '90 00'/Apdu.OK_APDU means 'success'
             if (Apdu.hasStatus(response, Apdu.OK_APDU)) {
@@ -138,12 +160,14 @@ public class MainActivity extends AppCompatActivity implements OnDiscoveredTagLi
 
                 int counterValue = (int) payload[0];
                 setMainMessage(getString(R.string.current_counter) + " " + counterValue);
+                showCounterValue(counterValue);
 
+            } else if (Apdu.hasStatus(response, EMPTY_STATUS_CODE)) {
+                setMainMessage(getString(R.string.decrement_not_ok));
+                showCounterValue(-1);
             } else {
                 setMainMessage(getString(R.string.select_not_ok));
-                // enable the button so the user can install the applet
-                setMainMessage(R.string.cardlet_not_installed);
-                showInstallButton(true);
+                showCounterValue(-1);
             }
             isoCard.close();
         } catch (IOException e) {
@@ -151,78 +175,31 @@ public class MainActivity extends AppCompatActivity implements OnDiscoveredTagLi
         }
     }
 
-    @UiThread
-    void showInstallButton(boolean visibility) {
-        if (visibility){
-            installButton.setVisibility(View.VISIBLE);
-        } else {
-            installButton.setVisibility(View.GONE);
-        }
-    }
-
     /**
-     * Calls the Fidesmo App in order to install the Counter Applet  into the Fidesmo Card
-     * First, it checks whether the Fidesmo App is installed; if not, it opens Google Play
+     * Reads the value held by the Counter Applet by sending a SELECT operation to the card
      */
     @Click
-    void installButtonClicked() {
-        if (appInstalledOrNot(FIDESMO_APP)) {
-            try {
-                // create Intent to the Action exposed by the Fidesmo App
-                Intent intent = new Intent(SERVICE_DELIVERY_CARD_ACTION, Uri.parse(SERVICE_URI + APPLICATION_ID + "/" + SERVICE_ID));
-                startActivityForResult(intent, SERVICE_DELIVERY_REQUEST_CODE);
-            } catch (IllegalArgumentException e) {
-                Log.e(TAG, "Error when parsing URI");
-            }
-        } else {
-            notifyMustInstall();
-        }
-    }
-
-    // method called when the Fidesmo App activity has finished
-    // Will redraw the screen if it finished successfully
-    @OnActivityResult(SERVICE_DELIVERY_REQUEST_CODE)
-    void onResult(int resultCode) {
-        if (resultCode == RESULT_OK) {
-            Log.i(TAG, "Cardlet installation returned SUCCESS");
-            setMainMessage(R.string.put_card);
-            installButton.setVisibility(View.GONE);
-        } else {
-            Log.i(TAG, "Cardlet installation returned FAILURE");
-            Toast.makeText(getApplicationContext(), getString(R.string.failure),
-                    Toast.LENGTH_LONG).show();
-        }
+    void readCounterButtonClicked() {
+        pendingCommand = READ_COUNTER;
+        // The first argument is the activity for which the NFC is managed
+        // The second argument is the OnDiscoveredTagListener which is also implemented by this activity
+        // This means that tagDiscovered will be called whenever a new tag appears
+        tagDispatcher = TagDispatcher.get(this, this);
+        setMainMessage(getString(R.string.put_card));
+        // Start listening on the NFC interface when the app gains focus.
+        tagDispatcher.enableExclusiveNfc();
     }
 
     /**
-     * Use the package manager to detect if an application is installed on the phone
-     * @param uri an URI identifying the application's package
-     * @return 'true' is the app is installed
+     * Decrements the counter's value held by the Counter Applet.
+     * Displays if already 0.
      */
-    private boolean appInstalledOrNot(String uri) {
-        PackageManager pm = getPackageManager();
-        boolean app_installed = false;
-        try {
-            pm.getPackageInfo(uri, PackageManager.GET_ACTIVITIES);
-            app_installed = true;
-        }
-        catch (PackageManager.NameNotFoundException e) {
-            Log.i(TAG, "Fidesmo App not installed in phone");
-            app_installed = false;
-        }
-        return app_installed;
+    @Click
+    void decrementCounterButtonClicked() {
+        pendingCommand = DECREMENT_COUNTER;
+        tagDispatcher = TagDispatcher.get(this, this);
+        setMainMessage(getString(R.string.put_card));
+        tagDispatcher.enableExclusiveNfc();
     }
 
-    /**
-     * Show a Toast message to the user informing that Fidesmo App must be installed and launch the Google Play app-store
-     */
-    private void notifyMustInstall() {
-        Toast.makeText(getApplicationContext(), R.string.install_app_message, Toast.LENGTH_LONG).show();
-        // if the Google Play app is not installed, call the browser
-        try {
-            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(MARKET_URI + FIDESMO_APP)));
-        } catch (android.content.ActivityNotFoundException exception) {
-            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(MARKET_VIA_BROWSER_URI + FIDESMO_APP)));
-        }
-    }
 }

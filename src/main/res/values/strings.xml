@@ -6,13 +6,17 @@
     <string name="current_counter">The current value of the counter is:</string>
     <string name="reading_card">Reading card...</string>
     <string name="cardlet_not_installed">It seems that Counter Applet is not installed on the card.\nDo you want to install it?</string>
-    <string name="install_button">Install:\nCounter Applet</string>
+    <string name="read_counter_button">Read\nCounter</string>
+    <string name="decrease_counter_button">Decrease\nCounter</string>
     <string name="install_app_message">You need to install the Fidesmo App on your phone</string>
     <string name="enable_nfc">Please go to your phone settings and turn on NFC</string>
     <string name="quit">Quit</string>
     <string name="failure">Counter Applet installation failed</string>
     <string name="no_nfc_available">This device does not have NFC.</string>
     <string name="select_ok">Select OK</string>
-    <string name="select_not_ok">Select not OK</string>
+    <string name="select_not_ok">Select not OK. Counter application not found.</string>
+    <string name="decrement_not_ok">The counter was already 0: could not be decremented!.</string>
+    <string name="counter_empty">Empty!</string>
+    <string name="default_counter_value">\?</string>
 
 </resources>
