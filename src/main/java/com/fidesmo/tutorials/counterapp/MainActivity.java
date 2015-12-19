@@ -4,13 +4,11 @@ import android.content.Intent;
 import android.nfc.Tag;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
-import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
 import android.graphics.Color;
 
-import com.fidesmo.tutorials.counterapp.R;
-
+import org.androidannotations.annotations.AfterViews;
 import org.androidannotations.annotations.Click;
 import org.androidannotations.annotations.EActivity;
 import org.androidannotations.annotations.ViewById;
@@ -21,6 +19,7 @@ import java.io.IOException;
 import nordpol.IsoCard;
 import nordpol.android.AndroidCard;
 import nordpol.android.TagDispatcher;
+import nordpol.android.TagArbiter;
 import nordpol.android.OnDiscoveredTagListener;
 import nordpol.Apdu;
 
@@ -42,6 +41,7 @@ public class MainActivity extends AppCompatActivity implements OnDiscoveredTagLi
     // Card commands
     final private static int READ_COUNTER = 1;
     final private static int DECREMENT_COUNTER = 2;
+    // Command to be sent to the card when it is detected. Initialized to the safe option
     private int pendingCommand = READ_COUNTER;
 
     // For the "read counter" APDU command we will use Nordpol's built-in select operation
@@ -55,6 +55,12 @@ public class MainActivity extends AppCompatActivity implements OnDiscoveredTagLi
 
     // The TagDispatcher is responsible for managing the NFC for the activity
     private TagDispatcher tagDispatcher;
+
+    // The TagArbiter makes it easier to connect to the card without having to remove it from the
+    // phone for a second operation
+    private TagArbiter tagArbiter = TagArbiter.getTagArbiter();
+
+    private IsoCard detectedIsoCard = null;
 
     // UI elements
     @ViewById
@@ -89,14 +95,25 @@ public class MainActivity extends AppCompatActivity implements OnDiscoveredTagLi
         }
     }
 
+    @AfterViews
+    void setUpDispatcher() {
+        // The first argument is the activity for which the NFC is managed
+        // The second argument is the OnDiscoveredTagListener which is also implemented by this activity
+        // This means that tagDiscovered will be called whenever a new tag appears
+        tagDispatcher = TagDispatcher.get(this, tagArbiter, true, true);
+    }
 
     @Override
     protected void onResume() {
+        tagDispatcher.enableExclusiveNfc();
+        tagArbiter.setListener(this);
         super.onResume();
     }
 
     @Override
     public void onPause() {
+        // Stop listening on the NFC interface
+        tagDispatcher.disableExclusiveNfc();
         super.onPause();
     }
 
@@ -113,13 +130,11 @@ public class MainActivity extends AppCompatActivity implements OnDiscoveredTagLi
     public void tagDiscovered(Tag tag) {
         setMainMessage(R.string.reading_card);
         try {
-            IsoCard isoCard = AndroidCard.get(tag);
-            communicateWithCard(isoCard);
+            detectedIsoCard = AndroidCard.get(tag);
+            communicateWithCard(detectedIsoCard);
         } catch(IOException e) {
             e.printStackTrace();
         }
-        // Stop listening on the NFC interface once the card transaction has finished
-        tagDispatcher.disableExclusiveNfc();
     }
 
     /**
@@ -145,7 +160,6 @@ public class MainActivity extends AppCompatActivity implements OnDiscoveredTagLi
                     // TODO: raise exception. Meanwhile, just read the counter
                     response = isoCard.transceive(Apdu.select(APPLICATION_ID, APP_VERSION));
                     Log.i(TAG, "Unknown command");
-
             }
 
             // Analyze the response. Its last two bytes are the status bytes - '90 00'/Apdu.OK_APDU means 'success'
@@ -170,8 +184,12 @@ public class MainActivity extends AppCompatActivity implements OnDiscoveredTagLi
                 showCounterValue(-1);
             }
             isoCard.close();
+            // make sure that if the user keeps the card to the phone, the counter will not be decreased by accident
+            pendingCommand = READ_COUNTER;
         } catch (IOException e) {
+            // Happens when we call this function when the card has been removed
             Log.e(TAG, "Error reading card", e);
+            detectedIsoCard = null;
         }
     }
 
@@ -181,13 +199,12 @@ public class MainActivity extends AppCompatActivity implements OnDiscoveredTagLi
     @Click
     void readCounterButtonClicked() {
         pendingCommand = READ_COUNTER;
-        // The first argument is the activity for which the NFC is managed
-        // The second argument is the OnDiscoveredTagListener which is also implemented by this activity
-        // This means that tagDiscovered will be called whenever a new tag appears
-        tagDispatcher = TagDispatcher.get(this, this);
-        setMainMessage(getString(R.string.put_card));
-        // Start listening on the NFC interface when the app gains focus.
-        tagDispatcher.enableExclusiveNfc();
+        setMainMessage(getString(R.string.put_card_read));
+        // if a card has been detected previously, we'll attempt to send the command even though
+        // it will raise an exception if the user has removed it
+        if (detectedIsoCard != null) {
+            communicateWithCard(detectedIsoCard);
+        }
     }
 
     /**
@@ -197,9 +214,9 @@ public class MainActivity extends AppCompatActivity implements OnDiscoveredTagLi
     @Click
     void decrementCounterButtonClicked() {
         pendingCommand = DECREMENT_COUNTER;
-        tagDispatcher = TagDispatcher.get(this, this);
-        setMainMessage(getString(R.string.put_card));
-        tagDispatcher.enableExclusiveNfc();
+        setMainMessage(getString(R.string.put_card_decrease));
+        if (detectedIsoCard != null) {
+            communicateWithCard(detectedIsoCard);
+        }
     }
-
 }
