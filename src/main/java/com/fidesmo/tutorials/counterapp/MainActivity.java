@@ -36,8 +36,8 @@ import nordpol.Apdu;
 public class MainActivity extends AppCompatActivity implements OnDiscoveredTagListener {
 
     // APPLICATION_ID is the value assigned to your application by Fidesmo
-    final private static String APPLICATION_ID = "C89D215B";
-    final private static String APP_VERSION = "0201";
+    final private static String APPLICATION_ID = "42286D75";
+    final private static String APP_VERSION = "0101";
 
     // Card commands
     final private static int READ_COUNTER = 1;
